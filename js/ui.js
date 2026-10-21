@@ -1,39 +1,48 @@
 'use strict';
-// Grensesnitt: input, HUD, minikart, menyer og hovedløkka.
-const mini = $('mini'), mctx = mini.getContext('2d');
+// Grensesnitt: input, HUD, butikken, menyer og hovedløkka.
 const pv = $('preview'), pctx = pv.getContext('2d');
-let miniL = null, last = 0;
+const shopBtn = document.querySelector('#touch [data-k=shop]');
+let last = 0;
 const store = {
   get(k) { try { return localStorage.getItem(k); } catch (e) { return null; } },
   set(k, v) { try { localStorage.setItem(k, v); } catch (e) { /* privat modus: ingen lagring */ } }
 };
 look.lack = clamp(+store.get('mj-lack') || 0, 0, LACK.length - 1);
 look.neon = clamp(+(store.get('mj-neon') ?? 0), 0, NEON.length - 1);
-const RANKS = [[12000, 'Legenden fra Karl Johan'], [8000, 'Kongen av Grønland'], [5000, 'Respektert bror'],
-  [2500, 'Lokal kjendis'], [1000, 'Moped-legende'], [0, 'Søndagssjåfør']];
-const hiscore = () => +store.get('mj-hi') || 0;
+const RANKS = [[15000, 'Legenden fra Karl Johan'], [9000, 'Kongen av Grønland'], [5000, 'Byens største sjarmør'],
+  [2500, 'Respektert bror'], [1000, 'Lokal kjendis'], [0, 'Søndagssjåfør']];
+const hiscore = () => +store.get('mj2-hi') || 0;
 const fmt = n => Math.round(n).toLocaleString('nb-NO');
 const show = (id, on) => $(id).classList.toggle('hidden', !on);
 
 // ---------- Input ----------
-const KEYMAP = { ArrowUp: 'gas', KeyW: 'gas', ArrowDown: 'brake', KeyS: 'brake', ArrowLeft: 'left', KeyA: 'left',
-  ArrowRight: 'right', KeyD: 'right', Space: 'drift', ShiftLeft: 'nos', ShiftRight: 'nos', KeyH: 'horn' };
+const HOLD = { ArrowRight: 'gas', KeyD: 'gas', ArrowLeft: 'brake', KeyA: 'brake', ShiftLeft: 'nos', ShiftRight: 'nos' };
 addEventListener('keydown', e => {
-  const k = KEYMAP[e.code];
+  const k = HOLD[e.code];
   if (k) { input[k] = 1; e.preventDefault(); }
+  if (e.code === 'ArrowUp' || e.code === 'ArrowDown' || e.code === 'Space') e.preventDefault();
   if (e.repeat) return;
+  if (state === 'play') {
+    if (e.code === 'ArrowUp' || e.code === 'KeyW') laneChange(-1);
+    else if (e.code === 'ArrowDown' || e.code === 'KeyS') laneChange(1);
+    else if (e.code === 'Space' || e.code === 'KeyH') honk();
+    else if (e.code === 'KeyE') openShop();
+  } else if (state === 'shop' && (e.code === 'KeyE' || e.code === 'Escape')) return closeShop();
   if (e.code === 'KeyM') toggleMusic();
   else if (e.code === 'KeyP' || e.code === 'Escape') togglePause();
   else if (e.code === 'Enter' && (state === 'menu' || state === 'over')) start();
 });
-addEventListener('keyup', e => { const k = KEYMAP[e.code]; if (k) input[k] = 0; });
+addEventListener('keyup', e => { const k = HOLD[e.code]; if (k) input[k] = 0; });
 addEventListener('blur', () => { for (const k in input) input[k] = 0; });
 if ('ontouchstart' in window || navigator.maxTouchPoints > 0) document.body.classList.add('touch');
 document.querySelectorAll('#touch button').forEach(b => {
   const k = b.dataset.k;
-  const set = v => e => { e.preventDefault(); input[k] = v; b.classList.toggle('on', !!v); };
-  b.addEventListener('pointerdown', set(1));
-  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, set(0));
+  b.addEventListener('pointerdown', e => {
+    e.preventDefault(); b.classList.add('on');
+    if (k in input) input[k] = 1;
+    else if (state === 'play') { if (k === 'up') laneChange(-1); else if (k === 'down') laneChange(1); else if (k === 'horn') honk(); else if (k === 'shop') openShop(); }
+  });
+  for (const ev of ['pointerup', 'pointercancel', 'pointerleave']) b.addEventListener(ev, e => { e.preventDefault(); b.classList.remove('on'); if (k in input) input[k] = 0; });
 });
 document.addEventListener('contextmenu', e => e.preventDefault());
 
@@ -56,58 +65,82 @@ function refreshPickers() {
 }
 function drawPreview() {
   pctx.setTransform(1, 0, 0, 1, 0, 0); pctx.clearRect(0, 0, pv.width, pv.height);
-  pctx.translate(pv.width / 2, pv.height / 2 + 6); pctx.scale(3.6, 3.6);
-  const car = { x: 0, y: 0, drawA: -0.25 + Math.sin(T * 0.9) * 0.25, color: LACK[look.lack][1], kind: 'player', brake: 0 };
+  pctx.fillStyle = 'rgba(255,255,255,0.06)'; pctx.fillRect(40, pv.height - 34, pv.width - 80, 3);
+  pctx.translate(pv.width / 2, pv.height - 34); pctx.scale(2.3, 2.3);
+  const car = { x: 0, y: 0, type: 'bmw', kind: 'player', color: LACK[look.lack][1], driver: true, wheelA: T * 5, rock: Math.sin(T * 3) * 0.5, fog: 0 };
   const neon = NEON[look.neon][1];
-  if (neon) {
-    pctx.save(); pctx.globalCompositeOperation = 'lighter'; pctx.rotate(car.drawA); pctx.scale(1.5, 0.85);
-    World.drawGlow(pctx, neon, 34, 0, 0, 1 + Math.sin(T * 6) * 0.06); pctx.restore();
-  }
-  drawCar(pctx, car, T, { rims: true, kidney: true });
+  if (neon) { pctx.globalCompositeOperation = 'lighter'; drawGlow(pctx, neon, 60, 0, -2, 1.6, 0.3); pctx.globalCompositeOperation = 'source-over'; }
+  drawSideCar(pctx, car, 0, T);
 }
 
-// ---------- HUD og minikart ----------
+// ---------- HUD ----------
 const hudC = {};
 function setT(id, v) { if (hudC[id] !== v) { hudC[id] = v; $(id).textContent = v; } }
 function setW(id, f) { const v = (clamp(f, 0, 1) * 100).toFixed(1) + '%'; if (hudC[id] !== v) { hudC[id] = v; $(id).style.width = v; } }
+function hintText() {
+  const p = G.p;
+  if (G.atShop) return isTouch() ? 'Trykk HANDLE for å handle 🛒' : 'Trykk E for å handle 🛒';
+  if (G.action) return G.owned.cam ? '📹 Kameraet går …' : '♥ Bilen gynger … ♥';
+  if (p.passenger) return G.wanted ? 'Rist av purken først!' : 'Parker inntil fortauet (øverste fil) og stopp ♥';
+  if (G.date) return 'Kjør inn til fortauet og stopp, så hopper hun inn';
+  if (G.gummi <= 0) return 'Plukk opp gummi på veien før du tuter på damene';
+  return `Tut på damene på fortauet (${isTouch() ? 'TUT' : 'Mellomrom'})`;
+}
+function radarText() {
+  if (!G.owned.radar) return '';
+  const p = G.p, cam = Street.camsIn(p.x, p.x + 1600).find(x => !G.camsHit.has(x));
+  if (cam !== undefined) return `📡 Fotoboks om ${Math.round((cam - p.x) * 0.25)} m`;
+  return G.traffic.some(c => c.kind === 'police' && !c.chase && c.x > p.x && c.x - p.x < 1600) ? '📡 Purken foran!' : '';
+}
 function hud() {
-  const p = G.p, m = G.mission;
+  const p = G.p;
   setT('score', fmt(G.score));
   setT('combo', G.combo > 1 ? '×' + G.combo : '');
-  setT('speed', Math.round(p.speed * KMH) + ' km/t');
+  setT('kr', fmt(G.kr) + ' kr');
+  setT('gummiN', String(G.gummi));
+  setT('speed', Math.round(Math.abs(p.v) * KMH) + ' km/t');
   setW('nos', G.nos);
-  const mins = 21 * 60 + Math.min(G.time, NIGHT) / NIGHT * 360;
-  setT('clock', String(Math.floor(mins / 60) % 24).padStart(2, '0') + ':' + String(Math.floor(mins % 60)).padStart(2, '0'));
-  setT('district', World.district(p.x, p.y));
-  setT('mission', !m ? '' : m.stage === 'pickup' ? `Hent ${m.name} ved ${m.at.sign.toLowerCase()}en på ${m.at.name}`
-    : `Kjør ${m.name} til ${m.to.name} · ${Math.ceil(m.t)} s`);
+  setT('clock', clockStr());
+  setT('district', district(p.x));
+  setT('hint', hintText());
   setT('wanted', G.wanted ? '🚨'.repeat(G.wanted) : '');
   setT('prikker', 'PRIKKER ' + '●'.repeat(Math.min(G.prikker, MAX_PRIKKER)) + '○'.repeat(Math.max(0, MAX_PRIKKER - G.prikker)));
+  setT('owned', SHOP.filter(s => s.once && G.owned[s.id]).map(s => s.icon).join(' '));
+  setT('radar', radarText());
   const b = G.bust > 0.05;
   if (hudC.bust !== b) { hudC.bust = b; show('bust', b); }
   setW('bustbar', G.bust / 1.6);
+  const sh = !!G.atShop;
+  if (hudC.shop !== sh) { hudC.shop = sh; shopBtn.classList.toggle('hidden', !sh); }
 }
-function drawMini() {
-  if (!miniL) return;
-  const { s, ox, oy } = miniL, d = DPR, P = o => [o.x * s + ox, o.y * s + oy];
-  const blob = (o, r, col) => { const [x, y] = P(o); mctx.fillStyle = col; mctx.beginPath(); mctx.arc(x, y, r * d, 0, 7); mctx.fill(); };
-  mctx.setTransform(1, 0, 0, 1, 0, 0); mctx.drawImage(miniL.c, 0, 0);
-  for (const ch of G.chains) blob(ch, 1.3, '#f5c542');
-  for (const c of G.police) blob(c, 2.6, c.siren && Math.floor(T * 6) % 2 ? '#ff4040' : '#4d8dff');
-  const ob = objective();
-  if (ob) blob(ob, 3.5 + Math.sin(T * 6), ob.col);
-  const [x, y] = P(G.p);
-  mctx.save(); mctx.translate(x, y); mctx.rotate(G.p.a); mctx.fillStyle = '#fff';
-  mctx.beginPath(); mctx.moveTo(5 * d, 0); mctx.lineTo(-3.5 * d, -3.5 * d); mctx.lineTo(-3.5 * d, 3.5 * d); mctx.closePath(); mctx.fill();
-  mctx.restore();
+
+// ---------- Butikken ----------
+function openShop() {
+  if (state !== 'play' || !G.atShop) return;
+  state = 'shop'; Sfx.silence(); renderShop(); show('shop', true);
+  $('msg').classList.remove('show');
 }
+function closeShop() { state = 'play'; show('shop', false); }
+function renderShop() {
+  $('wallet').textContent = `Du har ${fmt(G.kr)} kr · ${G.gummi} gummi`;
+  $('shopList').innerHTML = SHOP.map(it => {
+    const owned = it.once && G.owned[it.id], broke = G.kr < it.price;
+    return `<div class="item"><div class="ic">${it.icon}</div><div class="tx"><b>${it.name}</b><small>${it.desc}</small></div>` +
+      `<button data-id="${it.id}" ${owned || broke ? 'disabled' : ''}>${owned ? 'Kjøpt ✓' : fmt(it.price) + ' kr'}</button></div>`;
+  }).join('');
+}
+$('shopList').addEventListener('click', e => {
+  const id = e.target.dataset && e.target.dataset.id, it = SHOP.find(s => s.id === id);
+  if (!it || G.kr < it.price || (it.once && G.owned[id])) return;
+  G.kr -= it.price; Sfx.kaching();
+  if (id === 'gummi') G.gummi += 3; else if (id === 'nos') G.nos = 1; else G.owned[id] = true;
+  renderShop();
+});
 
 function resize() {
   DPR = Math.min(2, window.devicePixelRatio || 1); W = innerWidth; H = innerHeight;
   canvas.width = Math.round(W * DPR); canvas.height = Math.round(H * DPR);
-  const small = matchMedia('(max-width:640px)').matches;
-  mini.width = Math.round((small ? 120 : 190) * DPR); mini.height = Math.round((small ? 90 : 140) * DPR);
-  miniL = World.miniLayer(mini.width, mini.height);
+  SC = Math.min(H / VH, W / 760); VW = W / SC; OY = (H - VH * SC) / 2;
 }
 addEventListener('resize', resize);
 
@@ -116,9 +149,9 @@ function start() {
   Sfx.init();
   if (document.activeElement) document.activeElement.blur();
   newGame(); state = 'play';
-  show('menu', false); show('over', false); show('pause', false); show('hud', true);
+  show('menu', false); show('over', false); show('pause', false); show('shop', false); show('hud', true);
   for (const k in hudC) delete hudC[k];
-  msg('Natta er ung!<small>Samle respekt før klokka slår 03:00</small>');
+  msg('Natta er ung!<small>Plukk opp gummi og tut på damene</small>');
 }
 function toMenu() {
   state = 'menu';
@@ -129,14 +162,14 @@ function gameOver(reason) {
   state = 'over'; Sfx.silence();
   $('msg').classList.remove('show');
   const prev = hiscore(), s = G.stats;
-  if (G.score > prev) store.set('mj-hi', G.score);
+  if (G.score > prev) store.set('mj2-hi', G.score);
   $('overTitle').textContent = reason === 'time' ? 'Klokka er 03:00 – natta er over' : 'Lappen ryker! 8 prikker';
   $('overScore').textContent = fmt(G.score);
   $('overRank').textContent = RANKS.find(r => G.score >= r[0])[1];
-  $('overStats').innerHTML = `Gullkjeder: ${s.chains} · Kompiser kjørt: ${s.kompis} · Driftpoeng: ${fmt(s.drift)}<br>` +
-    `Rista av purken: ${s.escapes} · Tatt: ${s.busts} · Prikker: ${Math.min(G.prikker, MAX_PRIKKER)}/${MAX_PRIKKER}`;
+  $('overStats').innerHTML = `Damer med på tur: ${s.dates} · Gummi plukket: ${s.gummi} · Gullkjeder: ${s.chains}<br>` +
+    `Tjent: ${fmt(s.earned)} kr · Nesten-treff: ${s.near} · Rista av purken: ${s.escapes} · Tatt: ${s.busts}`;
   $('hiOver').textContent = G.score > prev ? '★ NY REKORD! ★' : 'Rekord: ' + fmt(prev);
-  show('hud', false); show('bust', false); show('over', true);
+  show('hud', false); show('bust', false); show('shop', false); show('over', true);
 }
 function togglePause() {
   if (state === 'play') { state = 'pause'; show('pause', true); Sfx.silence(); }
@@ -154,23 +187,20 @@ function loop(ts) {
   const dt = Math.min(0.033, Math.max(0, (ts - last) / 1000));
   last = ts; T += dt;
   if (state === 'play') {
-    const n = dt > 0.018 ? 2 : 1;
-    for (let k = 0; k < n && state === 'play'; k++) update(dt / n);
+    update(dt);
     if (state === 'play') {
-      const p = G.p;
-      const siren = G.police.reduce((m, c) => c.siren ? Math.max(m, 1 - dist(c, p) / 1600) : m, 0);
-      const skid = G.drifting ? Math.min(1, Math.abs(p.lat) / 300) : p.brake && p.fwd > 220 ? 0.5 : 0;
-      Sfx.update(Math.min(1, p.speed / 720), input.gas, skid, siren);
+      const p = G.p, siren = G.traffic.reduce((m, c) => c.siren ? Math.max(m, 1 - Math.abs(c.x - p.x) / 1600) : m, 0);
+      Sfx.update(Math.min(1, Math.abs(p.v) / 760), input.gas && !G.action ? 1 : 0, p.brake && p.v > 250 ? 0.4 : 0, siren);
       hud();
     }
-  } else if (state !== 'pause') attract(dt);
-  if (state !== 'pause') render();
-  if (state === 'play') drawMini();
+  } else if (state === 'menu' || state === 'over') attract(dt);
+  if (state !== 'pause' && state !== 'shop') render();
   if (state === 'menu') drawPreview();
   requestAnimationFrame(loop);
 }
 
 buildPickers(); resize(); newGame(); toMenu();
 $('start').onclick = start; $('again').onclick = start; $('toMenu').onclick = toMenu;
-$('resume').onclick = togglePause; $('musicBtn').onclick = toggleMusic; mini.onclick = togglePause;
+$('resume').onclick = togglePause; $('musicBtn').onclick = toggleMusic; $('shopDone').onclick = closeShop;
+$('clock').onclick = togglePause;
 requestAnimationFrame(t => { last = t; requestAnimationFrame(loop); });

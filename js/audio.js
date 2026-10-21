@@ -76,6 +76,11 @@ const Sfx = (() => {
   const good = () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.22, 'square', 0.06, i * 0.07));
   const bad = () => tone(300, 0.6, 'sawtooth', 0.1, 0, 0.4);
   const nos = () => noise(0.5, 0.2, 900, 'bandpass');
+  const kaching = () => { tone(1320, 0.08, 'square', 0.08); tone(1760, 0.3, 'square', 0.07, 0.07); noise(0.12, 0.08, 6000, 'highpass', 0.05); };
+  const pop = () => tone(420, 0.16, 'sine', 0.25, 0, 2.4);
+  const kiss = () => { noise(0.06, 0.25, 3000, 'highpass'); tone(1400, 0.08, 'sine', 0.08, 0.02, 0.6); };
+  const squeak = () => tone(780 + Math.random() * 120, 0.12, 'triangle', 0.05, 0, 0.75);
+  const door = () => { noise(0.12, 0.35, 300); tone(70, 0.15, 'sine', 0.3); };
 
   // Musikk: enkel hiphop-loop i A-moll, 92 BPM
   const SPB = 60 / 92 / 4;
@@ -103,5 +108,5 @@ const Sfx = (() => {
     return music;
   }
 
-  return { init, update, silence, horn, chain, crash, flash, good, bad, nos, toggleMusic };
+  return { init, update, silence, horn, chain, crash, flash, good, bad, nos, kaching, pop, kiss, squeak, door, toggleMusic };
 })();

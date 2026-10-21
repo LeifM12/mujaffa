@@ -1,48 +1,60 @@
 'use strict';
-// Spillogikk: tilstand, respekt, oppdrag, politi, partikler, kamera og tegning.
+// Spillogikk: BMW-en, gummi, damene, butikken, politiet og tegning av gata.
 const $ = id => document.getElementById(id);
 const canvas = $('game'), ctx = canvas.getContext('2d');
-const KMH = 0.3, NIGHT = 180, MAX_PRIKKER = 8;
+const NIGHT = 180, MAX_PRIKKER = 8;
 const LACK = [['Sort', '#15171c'], ['Hvit', '#e6e7eb'], ['Gull', '#c9a227'], ['Rød', '#a3121b'], ['Blå', '#1d3b8f']];
-const NEON = [['Lilla', 'rgba(170,80,255,0.65)'], ['Blå', 'rgba(40,160,255,0.65)'], ['Grønn', 'rgba(40,255,140,0.6)'], ['Rosa', 'rgba(255,60,170,0.65)'], ['Av', null]];
-const NAMES = ['Ahmed', 'Jonas', 'Mo', 'Sander', 'Yusuf', 'Emil', 'Ali', 'Kevin', 'Hamza', 'Mathias', 'Omar', 'Jakob'];
+const NEON = [['Lilla', 'rgba(170,80,255,0.75)'], ['Blå', 'rgba(40,160,255,0.75)'], ['Grønn', 'rgba(40,255,140,0.7)'], ['Rosa', 'rgba(255,60,170,0.75)'], ['Av', null]];
+const SHOP = [
+  { id: 'gummi', icon: '🛍️', name: 'Gummi 3-pakning', desc: 'Sikkerhet først. +3 gummi', price: 150 },
+  { id: 'cam', icon: '📹', name: 'Bilkamera', desc: 'Se actionen på skjermen', price: 1500, once: true },
+  { id: 'bass', icon: '🔊', name: 'Bass-anlegg', desc: 'Damene digger bassen: +25 % sjanse', price: 1200, once: true },
+  { id: 'felger', icon: '✨', name: 'Gullfelger', desc: '+25 % respekt på alt', price: 900, once: true },
+  { id: 'radar', icon: '📡', name: 'Radarvarsler', desc: 'Varsler om fotobokser og purken', price: 800, once: true },
+  { id: 'duft', icon: '🌲', name: 'Duftgran', desc: 'Lukter vanilje. +5 % sjanse', price: 100, once: true },
+  { id: 'nos', icon: '🔥', name: 'NOS-påfyll', desc: 'Full NOS-tank', price: 250 }
+];
+const SAY = {
+  yes: ['Hei kjekken! 😘', 'Fin bil! 😍', 'Skal vi ta en tur?', 'Endelig en med stil!', 'Ok da, én tur 😏'],
+  noGummi: ['Ikke uten gummi! 🙅‍♀️', 'Har du gummi? Nei? Ha det!', 'Sikkerhet først, vennen'],
+  no: ['Nei takk!', 'Drøm videre 🙄', 'Kjør videre, kompis', 'Har kjæreste!', 'Kanskje neste gang'],
+  fast: ['Hæ?', 'For en råkjører …'],
+  bye: ['Ring meg! 📱', 'Det var hyggelig ♥', 'Vi ses, kjekken!', 'Wow 😳'],
+  giveUp: ['Typisk …', 'Glem det!'],
+  full: ['Bilen er jo full!'],
+  men: ['Feil fyr, bror 😅', 'Rått anlegg!', 'Fin bil, mann!', 'Hæ?']
+};
+const PHYS = { acc: 380, max: 560, nosAcc: 820, nosMax: 760, brake: 950, rev: 150 };
 const pick = a => a[Math.random() * a.length | 0];
-const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
-const input = { gas: 0, brake: 0, left: 0, right: 0, drift: 0, nos: 0, horn: 0 };
-let state = 'menu', G = null, T = 0, W = 1, H = 1, DPR = 1;
+const input = { gas: 0, brake: 0, nos: 0 };
+let state = 'menu', G = null, T = 0, W = 1, H = 1, DPR = 1, SC = 1, VW = 1000, OY = 0;
 let look = { lack: 0, neon: 0 };
-
-function farIntersection(from, min) {
-  for (let k = 0; k < 50; k++) {
-    const i = Math.random() * World.NX | 0, j = Math.random() * World.NY | 0;
-    const p = { x: World.VX[i], y: World.HY[j], i, j };
-    if (!from || dist(p, from) > min) return p;
-  }
-  return { x: World.VX[0], y: World.HY[0], i: 0, j: 0 };
-}
-
-function spawnChain() {
-  for (;;) {
-    const c = World.randomRoadPoint();
-    if (!G || !G.p || dist(c, G.p) > 300) return { x: c.x, y: c.y, ph: Math.random() * 6 };
-  }
-}
+const isTouch = () => document.body.classList.contains('touch');
 
 function newGame() {
-  const p = new Car(World.VX[3] + 60, World.HY[3] + World.LANE, 0, LACK[look.lack][1], 'player');
-  G = { p, time: 0, score: 0, combo: 1, comboT: 0, prikker: 0, wanted: 0, lastSeen: 0, seenCD: 0, bust: 0, nos: 0.6,
-    chains: [], traffic: [], police: [], skids: [], parts: [], pops: [], drift: 0, driftT: 0, drifting: false,
-    mission: null, nextMission: 2, hornHeld: false, boosting: false, shake: 0, rw: null,
-    cam: { x: p.x, y: p.y, z: 1 }, stats: { chains: 0, kompis: 0, drift: 0, escapes: 0, busts: 0 } };
-  for (let k = 0; k < 14; k++) G.chains.push(spawnChain());
-  while (G.traffic.length < 26) {
-    const s = farIntersection(p, 250);
-    const ds = [0, 1, 2, 3].filter(d => { const ni = s.i + DIRS[d][0], nj = s.j + DIRS[d][1]; return ni >= 0 && ni < World.NX && nj >= 0 && nj < World.NY; });
-    G.traffic.push(new Traffic(s.i, s.j, pick(ds)));
+  const p = { x: 260, y: LANES[0], lane: 0, prevLane: 0, v: 0, type: 'bmw', kind: 'player', color: LACK[look.lack][1],
+    driver: true, wheelA: 0, rock: 0, tilt: 0, fog: 0, brake: false, passenger: null, rims: null };
+  G = { p, seed: Math.random() * 1e6 | 0, time: 0, score: 0, combo: 1, comboT: 0, kr: 500, gummi: 0, prikker: 0,
+    wanted: 0, bust: 0, escT: 0, spawnPT: 0, nos: 0.5, owned: {}, traffic: [], peds: [], items: [], parts: [], pops: [],
+    flashes: [], spawned: -1, camX: 0, shake: 0, date: null, action: null, parkT: 0, atShop: null, camTip: false,
+    camsHit: new Set(), boosting: false, stats: { dates: 0, gummi: 0, chains: 0, earned: 0, escapes: 0, busts: 0, near: 0 } };
+  for (let k = 0; k < 6; k++) G.traffic.push(makeTraffic(p.x + 600 + k * 420 + Math.random() * 200, Math.random() * 3 | 0, false));
+}
+
+// Nytt stykke gate foran deg: folk på fortauet og ting på veien
+function spawnChunk(c) {
+  const r = rng(c * 7919 + G.seed), x0 = c * CHUNK;
+  if (c === 0) {
+    G.items.push({ x: 640, lane: 0, kind: 'gummi', val: 1, ph: 0 });
+    const q = Street.makePed(1060, r, 'dame'); q.walk = 0; G.peds.push(q);
   }
-  for (let k = 0; k < 5; k++) { const s = farIntersection(p, 1000); G.police.push(new Police(s.x, s.y)); }
-  World.HOT.forEach(h => { h.cool = 0; h.cheer = 0; });
-  World.CAMS.forEach(c => { c.cool = 0; c.flash = 0; });
+  for (let k = 0, n = 2 + (r() * 2 | 0); k < n; k++) G.peds.push(Street.makePed(x0 + 150 + r() * (CHUNK - 300), r, r() < 0.68 ? 'dame' : 'mann'));
+  const items = [];
+  if (r() < 0.75) items.push(['gummi', 1]);
+  if (r() < 0.3) items.push(['gummi', 1]);
+  for (let k = 0, n = r() * 3 | 0; k < n; k++) { const q = r(); items.push(['kr', q < 0.6 ? 100 : q < 0.9 ? 200 : 500]); }
+  if (r() < 0.5) items.push(['chain', 1]);
+  for (const [kind, val] of items) G.items.push({ x: x0 + 100 + r() * (CHUNK - 200), lane: r() * 3 | 0, kind, val, ph: r() * 6 });
 }
 
 // ---------- Hendelser ----------
@@ -50,329 +62,387 @@ function msg(html) {
   const m = $('msg');
   m.innerHTML = html; m.classList.remove('show'); void m.offsetWidth; m.classList.add('show');
 }
-const pop = (x, y, text, color) => G.pops.push({ x, y, text, color, life: 1.4 });
-function part(x, y, vx, vy, life, size, color, grow = 0) {
-  if (G.parts.length < 450) G.parts.push({ x, y, vx, vy, life, max: life, size, color, grow });
+const pop = (x, y, text, color) => G.pops.push({ x, y, text, color, life: 1.5 });
+const say = (q, text) => { q.say = text; q.sayT = 2.6; };
+function part(x, y, vx, vy, life, size, color, heart = false) {
+  if (G.parts.length < 400) G.parts.push({ x, y, vx, vy, life, max: life, size, color, heart });
 }
 function burst(x, y, n, color, sp, life, size) {
-  for (let k = 0; k < n; k++) {
-    const a = Math.random() * Math.PI * 2, s = sp * (0.3 + Math.random());
-    part(x, y, Math.cos(a) * s, Math.sin(a) * s, life * (0.5 + Math.random() * 0.5), size, color);
-  }
+  for (let k = 0; k < n; k++) { const a = Math.random() * Math.PI * 2, s = sp * (0.3 + Math.random()); part(x, y, Math.cos(a) * s, Math.sin(a) * s, life, size, color); }
 }
-
 function respekt(base, label, x, y, color = '#f5c542') {
-  const pts = Math.round(base * G.combo);
+  const pts = Math.round(base * G.combo * (G.owned.felger ? 1.25 : 1));
   G.score += pts; G.comboT = 4.5; G.combo = Math.min(5, G.combo + 1);
   pop(x, y, `+${pts} ${label}`, color);
   return pts;
 }
-
 function raiseWanted(reason) {
-  G.lastSeen = 0; G.seenCD = 4;
   if (G.wanted >= 3) return;
-  G.wanted++;
+  G.wanted++; G.escT = 0; G.spawnPT = 1.2;
   msg(`<span style="color:#5b9bff">BLÅLYS!</span><small>${reason}</small>`);
 }
 
-function crash(v) {
-  const p = G.p;
-  Sfx.crash(Math.min(1, v / 500));
-  G.shake = Math.min(14, v / 30);
-  burst(p.x + Math.cos(p.a) * 20, p.y + Math.sin(p.a) * 20, 10, '#ffd36b', 220, 0.4, 2.5);
-  if (G.drift > 8) pop(p.x, p.y - 30, 'Drift ødelagt', '#ff6b6b');
-  G.drift = 0; G.driftT = 0; G.combo = 1; G.comboT = 0;
+function laneChange(d) {
+  if (state !== 'play' || G.action) return;
+  const p = G.p, nl = clamp(p.lane + d, 0, 2);
+  if (nl !== p.lane) { p.prevLane = p.lane; p.lane = nl; }
 }
 
 function honk() {
   const p = G.p;
   Sfx.horn();
-  for (const h of World.HOT) {
-    if (h.cool > 0 || dist(h, p) > 170 || p.speed > 260) continue;
-    h.cool = 20; h.cheer = 2.5;
-    respekt(150, 'SJOFE!', h.x, h.y - 30, h.col);
-    msg(`${pick(['Sjofe den bilen!', 'Respekt, bror!', 'Wolla, for en lyd!', 'Rått anlegg!'])}<small>Folka på ${h.name} digger deg</small>`);
-  }
-  if (G.seenCD <= 0 && G.police.some(c => c.los && dist(c, p) < 260)) raiseWanted('Tuta på politiet? Seriøst?');
+  if (G.action) return;
+  const range = [190, 150, 110][laneIdx(p.y)];
+  let q = null;
+  for (const o of G.peds) if (o.state === 'idle' && o.cool <= 0 && Math.abs(o.x - p.x) < range && (!q || Math.abs(o.x - p.x) < Math.abs(q.x - p.x))) q = o;
+  if (!q) return;
+  q.cool = 8;
+  if (q.kind === 'mann') return say(q, pick(SAY.men));
+  if (p.v > 230) return say(q, pick(SAY.fast));
+  if (p.passenger || G.date) return say(q, pick(SAY.full));
+  if (G.gummi <= 0) return say(q, pick(SAY.noGummi));
+  const chance = 0.5 + (G.owned.bass ? 0.25 : 0) + (G.owned.duft ? 0.05 : 0) + (G.owned.felger ? 0.1 : 0)
+    + Math.min(0.15, G.score / 30000) - (G.wanted ? 0.35 : 0);
+  if (Math.random() < chance) { say(q, pick(SAY.yes)); q.state = 'walk'; q.wait = 0; G.date = q; Sfx.kiss(); }
+  else { say(q, pick(SAY.no)); q.cool = 12; }
 }
 
-function busted() {
-  const p = G.p, loss = Math.round(G.score * 0.2);
-  G.prikker += 3; G.score -= loss; G.stats.busts++;
-  G.wanted = 0; G.bust = 0; G.combo = 1; G.drift = 0;
-  Sfx.bad();
-  msg(`TATT!<small>+3 prikker · −${loss.toLocaleString('nb-NO')} respekt</small>`);
-  if (G.prikker >= MAX_PRIKKER) return gameOver('lappen');
-  const s = farIntersection(p, 1200);
-  Object.assign(p, { x: s.x + 50, y: s.y + World.LANE, vx: 0, vy: 0, a: 0, drawA: 0 });
-  G.rw = null;
-  for (const c of G.police) if (dist(c, p) < 900) { const q = farIntersection(p, 1100); Object.assign(c, { x: q.x, y: q.y, vx: 0, vy: 0, pt: null }); }
+function collect(it) {
+  const p = G.p, y = p.y - 90;
+  if (it.kind === 'gummi') { G.gummi++; G.stats.gummi++; pop(it.x, y, '+1 GUMMI', '#7cd3ff'); Sfx.pop(); burst(it.x, LANES[it.lane] - 14, 10, '#7cd3ff', 120, 0.5, 2.5); }
+  else if (it.kind === 'kr') { G.kr += it.val; G.stats.earned += it.val; pop(it.x, y, `+${it.val} kr`, '#7dff9b'); Sfx.kaching(); }
+  else { respekt(100, 'GULLKJEDE', it.x, y); G.stats.chains++; Sfx.chain(); burst(it.x, LANES[it.lane] - 14, 14, '#f5c542', 140, 0.6, 2.5); }
+}
+
+function hit(c, rel) {
+  const p = G.p;
+  Sfx.crash(Math.min(1, rel / 500)); G.shake = Math.min(14, rel / 35);
+  burst((p.x + c.x) / 2, p.y - 30, 12, '#ffd36b', 220, 0.4, 2.5);
+  G.combo = 1; G.comboT = 0;
+  if (c.kind === 'police') raiseWanted('Du rammet en politibil!');
+  else { G.score = Math.max(0, G.score - 25); pop(p.x, p.y - 90, 'Bulk! −25', '#ff6b6b'); }
+}
+
+function finishAction() {
+  const p = G.p, q = p.passenger;
+  G.action = null; p.passenger = null; G.gummi--; G.stats.dates++;
+  respekt(400, 'DATE ♥', p.x, p.y - 120, '#ff7ab8');
+  Object.assign(q, { state: 'leave', x: p.x - 20, alpha: 0, walk: (Math.random() < 0.5 ? -1 : 1) * 30, cool: 1e9 });
+  say(q, pick(SAY.bye));
+  Sfx.good();
+  if (!G.owned.cam && !G.camTip) { G.camTip = true; msg('♥ ♥ ♥<small>Kjøp bilkamera i butikken for å se actionen 📹</small>'); }
+  else msg(pick(['Respekt! ♥', 'Kjekken! ♥', 'Rått! ♥']) + '<small>+1 date · −1 gummi</small>');
 }
 
 function escapeCops() {
   const lvl = G.wanted;
-  G.wanted = 0; G.stats.escapes++;
-  const pts = respekt(250 * lvl, 'RISTA AV PURKEN', G.p.x, G.p.y - 40, '#7dff6b');
-  msg(`Rista av purken!<small>+${pts} respekt · wolla, de så deg aldri</small>`);
+  G.wanted = 0; G.escT = 0; G.stats.escapes++;
+  for (const c of G.traffic) if (c.kind === 'police') Object.assign(c, { chase: false, siren: false, cruise: 230 });
+  const pts = respekt(300 * lvl, 'RISTA AV PURKEN', G.p.x, G.p.y - 120, '#7dff6b');
+  msg(`Rista av purken!<small>+${pts} respekt</small>`);
   Sfx.good();
 }
 
+function busted() {
+  const p = G.p, loss = Math.round(G.kr * 0.3);
+  G.prikker += 3; G.kr -= loss; G.stats.busts++;
+  G.wanted = 0; G.bust = 0; G.combo = 1; p.v = 0;
+  G.traffic = G.traffic.filter(c => c.kind !== 'police');
+  if (p.passenger) { const q = p.passenger; p.passenger = null; Object.assign(q, { state: 'leave', x: p.x, alpha: 0, walk: -40, cool: 1e9 }); say(q, 'Jeg drar!'); }
+  if (G.date) { G.date.state = 'idle'; G.date = null; }
+  Sfx.bad();
+  msg(`TATT!<small>+3 prikker · −${loss.toLocaleString('nb-NO')} kr</small>`);
+  if (G.prikker >= MAX_PRIKKER) gameOver('lappen');
+}
+
 // ---------- Oppdatering ----------
-function updateMission(dt, p) {
-  const m = G.mission;
-  if (!m) {
-    if ((G.nextMission -= dt) > 0) return;
-    G.mission = { stage: 'pickup', at: pick(World.HOT.filter(h => dist(h, p) > 700)), name: pick(NAMES) };
-    return;
-  }
-  if (m.stage === 'pickup') {
-    if (dist(m.at, p) < 80 && p.speed < 110) {
-      m.to = pick(World.HOT.filter(h => h !== m.at && dist(h, m.at) > 1400));
-      m.stage = 'drop';
-      m.t = (Math.abs(m.to.x - p.x) + Math.abs(m.to.y - p.y)) / 230 + 12;
-      m.at.cheer = 1.5;
-      msg(`${m.name} hoppa inn!<small>«Kjør meg til ${m.to.name}, bror!»</small>`);
-      Sfx.good();
-    }
-  } else if (dist(m.to, p) < 90 && p.speed < 140) {
-    respekt(400 + Math.round(m.t * 12), 'LEVERT', m.to.x, m.to.y - 30, '#7dff6b');
-    G.stats.kompis++; m.to.cheer = 2;
-    msg(`Levert!<small>${m.name}: ${pick(['«Respekt, mann!»', '«Wolla, det gikk fort!»', '«Du er rå, bror.»'])}</small>`);
-    G.mission = null; G.nextMission = 2.5;
-    Sfx.good();
-  } else if ((m.t -= dt) <= 0) {
-    msg(`For treigt!<small>${m.name} gikk av og tok T-banen</small>`);
-    G.mission = null; G.nextMission = 3;
-    Sfx.bad();
+function updatePlayer(dt) {
+  const p = G.p, busy = !!G.action;
+  const gas = busy ? 0 : input.gas, brk = busy ? 0 : input.brake;
+  p.boost = !!(!busy && input.nos && gas && G.nos > 0.02);
+  if (p.boost) { G.nos = Math.max(0, G.nos - dt * 0.3); if (!G.boosting) Sfx.nos(); }
+  G.boosting = p.boost;
+  G.nos = Math.min(1, G.nos + dt * 0.012);
+  const max = p.boost ? PHYS.nosMax : PHYS.max;
+  if (gas && p.v < max) p.v += (p.boost ? PHYS.nosAcc : PHYS.acc) * dt;
+  if (brk) p.v = p.v > 10 ? p.v - PHYS.brake * dt : Math.max(-PHYS.rev, p.v - PHYS.acc * 0.6 * dt);
+  if (!gas && !brk) p.v -= Math.sign(p.v) * Math.min(Math.abs(p.v), 70 * dt);
+  if (p.v > max) p.v -= (p.v - max) * 2 * dt;
+  p.brake = !!brk && p.v > 0;
+  p.x += p.v * dt;
+  if (p.x < 120) { p.x = 120; p.v = Math.max(0, p.v); }
+  p.wheelA += p.v * dt / TYPES.bmw.wr;
+  p.y += (LANES[p.lane] - p.y) * Math.min(1, dt * 9);
+  p.rims = G.owned.felger ? '#f5c542' : null;
+  if (p.boost) {
+    const s = laneScale(p.y);
+    part(p.x - 90 * s, p.y - 10 * s, -260 - Math.random() * 120, (Math.random() - 0.5) * 40, 0.16, 5, Math.random() < 0.5 ? '#ffb347' : '#ffe08a');
   }
 }
 
-function updateAmbient(dt) {
-  const all = [...G.traffic, ...G.police, G.p];
-  for (const c of G.traffic) c.update(dt, all);
-  for (const c of G.police) { c.think(dt, G.p, state === 'play' ? G.wanted : 0); c.physics(dt, c.siren ? chaseP(G.wanted) : PATROL_P); }
-  for (let a = 0; a < G.police.length; a++) for (let b = a + 1; b < G.police.length; b++) {
-    const A = G.police[a], Bc = G.police[b], h = carHit(A, Bc);
-    if (h) { A.x += h[0] * h[2] / 2; A.y += h[1] * h[2] / 2; Bc.x -= h[0] * h[2] / 2; Bc.y -= h[1] * h[2] / 2; }
+function updateCollisions(dt) {
+  const p = G.p, pl = laneIdx(p.y);
+  for (const c of G.traffic) {
+    if (c.miss > 0) c.miss -= dt;
+    const side = Math.sign(p.x - c.x);
+    if (c.side === -1 && side === 1) {
+      if (c.kind === 'police' && !c.chase && p.v * KMH > 90) raiseWanted('Purken så deg kjøre for fort!');
+      else if (Math.abs(laneIdx(c.y) - pl) === 1 && p.v - c.v > 180 && c.miss <= 0) {
+        c.miss = 3; G.stats.near++; respekt(25, 'NESTEN!', c.x, c.y - 80, '#38d9ff');
+      }
+    }
+    c.side = side;
+    if (Math.abs(c.y - p.y) > 26) continue;
+    const lim = (carLen(p) + carLen(c)) / 2 - 8, dx = c.x - p.x;
+    if (Math.abs(dx) >= lim) continue;
+    if (Math.abs(p.y - LANES[p.lane]) > 6 && p.prevLane !== p.lane) { p.lane = p.prevLane; hit(c, 140); continue; }
+    if (dx > 0) {
+      p.x = c.x - lim;
+      const rel = p.v - c.v;
+      if (rel > 0) { if (rel > 110) hit(c, rel); p.v = c.v - rel * 0.3; c.v += rel * 0.2; c.stun = Math.max(c.stun, 0.6); }
+    } else {
+      p.x = c.x + lim;
+      const rel = c.v - p.v;
+      if (rel > 0) { if (rel > 110) hit(c, rel); p.v += rel * 0.5; c.v -= rel * 0.5; }
+    }
   }
+}
+
+function manageTraffic() {
+  const p = G.p, far = G.camX + VW + 1800;
+  G.traffic = G.traffic.filter(c => (c.x > G.camX - 900 && c.x < far + 1500) || (c.chase && c.x > G.camX - 2200));
+  if (G.traffic.filter(c => !c.chase).length >= 9) return;
+  const behind = p.v < 140 && Math.random() < 0.3, lane = Math.random() * 3 | 0;
+  const c = makeTraffic(behind ? G.camX - 300 : G.camX + VW + 200 + Math.random() * 1400, lane, !G.wanted && Math.random() < 0.1);
+  if (behind) c.cruise = c.v = 330 + Math.random() * 60;
+  if (laneFree(c, lane, [...G.traffic, p], 140) && !(behind && Math.abs(LANES[lane] - p.y) < 30)) G.traffic.push(c);
+}
+
+function updatePolice(dt) {
+  const p = G.p;
+  if (!G.wanted) { G.bust = 0; return; }
+  const all = [...G.traffic, p], cops = G.traffic.filter(c => c.kind === 'police');
+  for (const c of cops) policeChase(c, p, dt, all, G.wanted);
+  if (cops.filter(c => Math.abs(c.x - p.x) < 1600).length < G.wanted && (G.spawnPT -= dt) <= 0) {
+    G.spawnPT = 2.5;
+    const c = makeTraffic(G.camX - 250, Math.random() * 3 | 0, true);
+    c.v = p.v + 120; policeChase(c, p, 0, all, G.wanted); G.traffic.push(c);
+  }
+  const nearest = Math.min(1e9, ...cops.map(c => Math.abs(c.x - p.x)));
+  if (nearest > 900) { if ((G.escT += dt) > 4) return escapeCops(); } else G.escT = 0;
+  const close = cops.some(c => Math.abs(c.x - p.x) < 190 && Math.abs(c.y - p.y) < 70);
+  G.bust = close && Math.abs(p.v) < 110 ? G.bust + dt : Math.max(0, G.bust - dt * 0.6);
+  if (G.bust > 1.6) busted();
+}
+
+function updatePeds(dt) {
+  const p = G.p;
+  for (const q of G.peds) {
+    if (q.sayT > 0) q.sayT -= dt;
+    if (q.cool > 0) q.cool -= dt;
+    if (q.state === 'idle' && q.walk) q.x += q.walk * dt;
+    else if (q.state === 'walk') {
+      const d = p.x - 10 - q.x;
+      q.x += clamp(d, -110 * dt, 110 * dt); q.wait += dt;
+      if (Math.abs(d) < 16 && laneIdx(p.y) === 0 && Math.abs(p.v) < 30) {
+        q.state = 'in'; p.passenger = q; G.date = null; Sfx.door();
+        pop(p.x, p.y - 110, 'Hun hoppa inn! ♥', '#ff7ab8');
+      } else if (q.wait > 14 || Math.abs(d) > 900) { q.state = 'idle'; q.cool = 15; say(q, pick(SAY.giveUp)); G.date = null; }
+    } else if (q.state === 'leave') { q.x += q.walk * dt; q.alpha = Math.min(1, q.alpha + dt * 3); }
+  }
+  G.peds = G.peds.filter(q => q.state === 'in' || q === G.date || (q.x > G.camX - 300 && q.x < G.camX + VW + 3000));
+}
+
+function updateAction(dt) {
+  const p = G.p;
+  if (p.passenger && !G.action) {
+    const parked = laneIdx(p.y) === 0 && Math.abs(p.v) < 12 && !G.wanted;
+    G.parkT = parked ? G.parkT + dt : 0;
+    if (G.parkT > 0.6) { G.action = { t: 0, dur: 4.5, sq: 0 }; G.parkT = 0; }
+  }
+  const a = G.action;
+  if (a) {
+    a.t += dt; p.v = 0;
+    p.rock = Math.sin(a.t * 17) * 2.6; p.tilt = Math.sin(a.t * 17 + 1) * 0.012; p.fog = Math.min(1, p.fog + dt * 0.8);
+    if ((a.sq -= dt) <= 0) { a.sq = 0.3; Sfx.squeak(); }
+    if (Math.random() < dt * 9) part(p.x + (Math.random() - 0.5) * 80, p.y - 70, (Math.random() - 0.5) * 30, -60 - Math.random() * 40, 1.4, 16, Math.random() < 0.5 ? '#ff3fa4' : '#ff7ab8', true);
+    if (a.t >= a.dur) finishAction();
+  } else { p.rock *= 0.85; p.tilt = 0; p.fog = Math.max(0, p.fog - dt * 0.25); }
 }
 
 function update(dt) {
   const p = G.p;
   G.time += dt;
   if (G.time >= NIGHT) return gameOver('time');
-
-  p.throttle = input.gas; p.brake = input.brake; p.steer = input.right - input.left; p.hand = !!input.drift;
-  p.boost = !!(input.nos && input.gas) && G.nos > 0.02;
-  if (p.boost) { G.nos = Math.max(0, G.nos - dt * 0.33); if (!G.boosting) Sfx.nos(); }
-  G.boosting = p.boost;
-  G.nos = Math.min(1, G.nos + dt * 0.015);
-  const impact = p.physics(dt, PLAYER_P);
-  if (impact > 140) crash(impact);
-  if (input.horn && !G.hornHeld) honk();
-  G.hornHeld = !!input.horn;
-
-  // Drift: poeng samles mens du sklir og bankes når du tar grepet igjen
-  G.drifting = Math.abs(p.lat) > 90 && p.speed > 160;
-  if (G.drifting) {
-    G.drift += Math.abs(p.lat) * dt * 0.12; G.driftT = 0.45;
-    G.nos = Math.min(1, G.nos + dt * 0.12);
-  } else if (G.driftT > 0 && (G.driftT -= dt) <= 0) {
-    if (G.drift > 8) G.stats.drift += respekt(G.drift, 'DRIFT', p.x, p.y - 30, '#ff3fa4');
-    G.drift = 0;
-  }
-  // Bremsespor og røyk fra bakhjulene
-  const ca = Math.cos(p.a), sa = Math.sin(p.a);
-  const rw = [[p.x - ca * 15 - sa * 9, p.y - sa * 15 + ca * 9], [p.x - ca * 15 + sa * 9, p.y - sa * 15 - ca * 9]];
-  const skid = G.drifting || (p.brake && p.fwd > 220) || (p.hand && p.speed > 120);
-  if (skid && G.rw) {
-    for (let k = 0; k < 2; k++) G.skids.push([G.rw[k][0], G.rw[k][1], rw[k][0], rw[k][1]]);
-    if (G.skids.length > 1400) G.skids.splice(0, G.skids.length - 1400);
-    const w = rw[Math.random() < 0.5 ? 0 : 1];
-    if (Math.random() < 0.6) part(w[0], w[1], (Math.random() - 0.5) * 30, (Math.random() - 0.5) * 30, 0.9, 6, 'rgba(190,190,200,0.3)', 26);
-  }
-  G.rw = rw;
-  if (p.boost) part(p.x - ca * 26, p.y - sa * 26, -ca * 200 + (Math.random() - 0.5) * 60, -sa * 200 + (Math.random() - 0.5) * 60, 0.18, 5, Math.random() < 0.5 ? '#ffb347' : '#ffe08a');
-  if (G.comboT > 0 && (G.comboT -= dt) <= 0) G.combo = 1;
-
-  // Trafikk: kollisjon og nesten-treff
-  updateAmbient(dt);
-  for (const c of G.traffic) {
-    if (c.miss > 0) c.miss -= dt;
-    const h = carHit(p, c);
-    if (h) {
-      p.push(h[0], h[1], h[2]);
-      if (p.speed > 110 && c.stun <= 0) { crash(p.speed * 0.8); c.stun = 1.6; Sfx.horn(); }
-    } else if (p.speed > 300 && c.miss <= 0 && dist(c, p) < 56) {
-      c.miss = 3; respekt(25, 'NESTEN!', c.x, c.y - 20, '#38d9ff');
-    }
-  }
-
-  // Politiet
-  let seen = false;
-  for (const c of G.police) {
-    if (c.los && dist(c, p) < 700) seen = true;
-    const h = carHit(p, c);
-    if (!h) continue;
-    const [nx, ny, pen] = h;
-    p.x += nx * pen / 2; p.y += ny * pen / 2; c.x -= nx * pen / 2; c.y -= ny * pen / 2;
-    const rv = (p.vx - c.vx) * nx + (p.vy - c.vy) * ny, own = p.vx * nx + p.vy * ny;
-    if (rv < 0) { p.vx -= rv * nx * 0.9; p.vy -= rv * ny * 0.9; c.vx += rv * nx * 0.9; c.vy += rv * ny * 0.9; }
-    if (-rv > 120) crash(-rv);
-    if (input.gas && own < -150 && G.seenCD <= 0) raiseWanted('Du rammet en politibil!');
-  }
-  G.seenCD -= dt;
-  if (seen) {
-    G.lastSeen = 0;
-    if (G.seenCD <= 0 && p.speed * KMH > 105) raiseWanted('Råkjøring rett foran purken!');
-    else if (G.seenCD <= 0 && G.drifting) raiseWanted('Drifting rett foran purken!');
-  } else if (G.wanted > 0 && (G.lastSeen += dt) > 6 + G.wanted * 3) escapeCops();
-  if (G.wanted > 0) {
-    const close = G.police.some(c => dist(c, p) < 115);
-    G.bust = close && Math.abs(p.fwd) < 90 ? G.bust + dt : Math.max(0, G.bust - dt * 0.6);
-    if (G.bust > 1.6) return busted();
-  } else G.bust = 0;
-
-  // Fotobokser
-  for (const c of World.CAMS) {
-    if (c.flash > 0) c.flash -= dt * 3;
-    if (c.cool > 0) { c.cool -= dt; continue; }
-    const kmh = Math.round(p.speed * KMH);
-    if (Math.hypot(c.x - p.x, c.y - p.y) < 100 && kmh > 80) {
-      c.cool = 5; c.flash = 1; G.prikker++; Sfx.flash();
-      msg(`BLITZ!<small>Fotoboks: ${kmh} km/t i 50-sone · +1 prikk</small>`);
+  updatePlayer(dt);
+  while ((G.spawned + 1) * CHUNK < G.camX + VW + 1500) spawnChunk(++G.spawned);
+  updateTraffic(dt, G.traffic, p);
+  updatePolice(dt);
+  if (state !== 'play') return;
+  updateCollisions(dt);
+  manageTraffic();
+  const pl = laneIdx(p.y), reach = carLen(p) / 2 + 10;
+  for (const it of G.items) if (!it.got && it.lane === pl && Math.abs(it.x - p.x) < reach) { it.got = true; collect(it); }
+  G.items = G.items.filter(it => !it.got && it.x > G.camX - 400);
+  updatePeds(dt);
+  updateAction(dt);
+  for (const cx of Street.camsIn(p.x - 50, p.x + 50)) {
+    if (G.camsHit.has(cx) || Math.abs(cx - p.x) > 40) continue;
+    G.camsHit.add(cx);
+    const kmh = Math.round(p.v * KMH);
+    if (kmh > 80) {
+      const bot = Math.min(G.kr, 1500);
+      G.prikker++; G.kr -= bot; G.flashes.push({ x: cx, a: 1 }); Sfx.flash();
+      msg(`BLITZ! 📸<small>${kmh} km/t i 50-sone · +1 prikk · bot ${bot.toLocaleString('nb-NO')} kr</small>`);
       if (G.prikker >= MAX_PRIKKER) return gameOver('lappen');
     }
   }
+  G.atShop = !G.action && pl === 0 && Math.abs(p.v) < 40 ? Street.shopAt(p.x) : null;
+  if (G.comboT > 0 && (G.comboT -= dt) <= 0) G.combo = 1;
+  tick(dt);
+  const lead = 0.38 - 0.16 * clamp(p.v / PHYS.max, 0, 1);
+  G.camX = Math.max(0, G.camX + (p.x - VW * lead - G.camX) * Math.min(1, dt * 3));
+}
 
-  // Gullkjeder og hotspots
-  for (const ch of G.chains) {
-    if (dist(ch, p) > 34) continue;
-    respekt(100, 'GULLKJEDE', ch.x, ch.y);
-    G.stats.chains++; G.nos = Math.min(1, G.nos + 0.2);
-    Sfx.chain(); burst(ch.x, ch.y, 14, '#f5c542', 140, 0.6, 2.5);
-    Object.assign(ch, spawnChain());
-  }
-  for (const h of World.HOT) {
-    if (h.cool > 0) h.cool -= dt;
-    if (h.cheer > 0) h.cheer -= dt;
-    if (G.drifting && h.cool <= 0 && dist(h, p) < 200) {
-      h.cool = 20; h.cheer = 2.5;
-      respekt(200, 'DRIFTSHOW', h.x, h.y - 30, h.col);
-    }
-  }
-  updateMission(dt, p);
-
-  for (const q of G.parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; q.size += q.grow * dt; }
+// Partikler, poeng-tekster, blitz og skjelving
+function tick(dt) {
+  for (const q of G.parts) { q.x += q.vx * dt; q.y += q.vy * dt; q.life -= dt; }
   G.parts = G.parts.filter(q => q.life > 0);
   for (const q of G.pops) { q.y -= 34 * dt; q.life -= dt; }
   G.pops = G.pops.filter(q => q.life > 0);
-
-  const cam = G.cam;
-  cam.x += (p.x + p.vx * 0.35 - cam.x) * Math.min(1, dt * 4);
-  cam.y += (p.y + p.vy * 0.35 - cam.y) * Math.min(1, dt * 4);
-  const tz = baseZoom() * (1 - 0.2 * clamp(p.speed / 650, 0, 1));
-  cam.z += (tz - cam.z) * Math.min(1, dt * 2);
+  for (const f of G.flashes) f.a -= dt * 3;
+  G.flashes = G.flashes.filter(f => f.a > 0);
   G.shake = Math.max(0, G.shake - dt * 30);
 }
-const baseZoom = () => clamp(Math.min(W, H * 1.5) / 1150, 0.5, 1.15);
 
-// Menyen: byen lever i bakgrunnen mens kameraet glir over Oslo
+// Menyen: gata lever i bakgrunnen mens kameraet glir bortover
 function attract(dt) {
-  updateAmbient(dt);
-  G.cam.x = 2300 + Math.cos(T * 0.05) * 1500;
-  G.cam.y = 1450 + Math.sin(T * 0.07) * 900;
-  G.cam.z = baseZoom() * 0.85;
-  for (const c of World.CAMS) if (c.flash > 0) c.flash -= dt * 3;
+  G.camX += 70 * dt;
+  while ((G.spawned + 1) * CHUNK < G.camX + VW + 1500) spawnChunk(++G.spawned);
+  updateTraffic(dt, G.traffic, G.p);
+  manageTraffic();
+  for (const q of G.peds) { if (q.sayT > 0) q.sayT -= dt; if (q.state === 'idle' && q.walk) q.x += q.walk * dt; }
+  G.peds = G.peds.filter(q => q.x > G.camX - 300);
+  tick(dt);
 }
 
 // ---------- Tegning ----------
-function objective() {
-  const m = G && G.mission;
-  return !m ? null : m.stage === 'pickup' ? { x: m.at.x, y: m.at.y, col: '#3ee68a' } : { x: m.to.x, y: m.to.y, col: '#ff3fa4' };
+const clockStr = () => {
+  const m = 21 * 60 + Math.min(G.time, NIGHT) / NIGHT * 360;
+  return String(Math.floor(m / 60) % 24).padStart(2, '0') + ':' + String(Math.floor(m % 60)).padStart(2, '0');
+};
+
+function drawItem(it, X) {
+  const y = LANES[it.lane] - 6, s = laneScale(LANES[it.lane]), b = Math.sin(T * 4 + it.ph) * 2;
+  ctx.save(); ctx.translate(X, y + b); ctx.scale(s, s);
+  if (it.kind === 'gummi') {
+    ctx.fillStyle = '#2b8fd6'; rrect(ctx, -12, -24, 24, 24, 4); ctx.fill();
+    ctx.strokeStyle = '#fff'; ctx.lineWidth = 2.2; ctx.beginPath(); ctx.arc(0, -12, 7, 0, Math.PI * 2); ctx.stroke();
+    ctx.strokeStyle = 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1; ctx.setLineDash([2, 2]); ctx.strokeRect(-9.5, -21.5, 19, 19); ctx.setLineDash([]);
+  } else if (it.kind === 'kr') {
+    ctx.fillStyle = it.val >= 500 ? '#2e6fc1' : it.val >= 200 ? '#3a8f5a' : '#c0603a'; rrect(ctx, -18, -17, 36, 17, 2); ctx.fill();
+    ctx.strokeStyle = 'rgba(255,255,255,0.5)'; ctx.lineWidth = 1; ctx.strokeRect(-15, -14.5, 30, 12);
+    ctx.fillStyle = '#fff'; ctx.font = 'bold 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.fillText(it.val, 0, -8.5);
+  } else {
+    ctx.strokeStyle = '#f5c542'; ctx.lineWidth = 3.2; ctx.beginPath(); ctx.ellipse(0, -16, 12, 9, 0, 0, Math.PI * 2); ctx.stroke();
+    ctx.fillStyle = '#ffe08a'; dot(ctx, 0, -6, 4.5);
+  }
+  ctx.restore();
+}
+
+// Bilkameraet: sensurert «action» i Sims-stil – to hoder, dugg, hjerter og en stor sperre
+function drawCamView(x, y, w, h, a) {
+  const t = a.t, q = G.p.passenger || {}, bob = Math.sin(t * 17) * 3, lean = Math.min(1, t / 0.8) * 12;
+  ctx.save(); ctx.translate(x, y);
+  rrect(ctx, 0, 0, w, h, 10); ctx.fillStyle = '#120f1f'; ctx.fill(); ctx.clip();
+  ctx.scale(w / 250, h / 165);
+  ctx.fillStyle = '#0b1530'; ctx.fillRect(0, 0, 250, 82);
+  for (let i = 0; i < 14; i++) { ctx.fillStyle = `rgba(255,${170 + i * 5},110,0.55)`; dot(ctx, (i * 37 + 10) % 250, 28 + (i * 13) % 40, 2 + i % 3); }
+  ctx.fillStyle = '#05040a'; ctx.fillRect(0, 0, 250, 12); ctx.fillRect(0, 76, 250, 10);
+  ctx.fillStyle = '#222'; ctx.fillRect(110, 12, 30, 11);
+  ctx.save(); ctx.translate(125, 23); ctx.rotate(Math.sin(t * 9) * 0.5);
+  ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1; ctx.beginPath(); ctx.moveTo(0, 0); ctx.lineTo(0, 15); ctx.stroke();
+  if (G.owned.duft) { ctx.fillStyle = '#2f9e44'; ctx.beginPath(); ctx.moveTo(0, 13); ctx.lineTo(-8, 33); ctx.lineTo(8, 33); ctx.fill(); }
+  else { ctx.fillStyle = '#eee'; ctx.fillRect(-10, 15, 9, 9); ctx.fillRect(1, 17, 9, 9); ctx.fillStyle = '#111'; dot(ctx, -5.5, 19.5, 1.3); dot(ctx, 5.5, 21.5, 1.3); }
+  ctx.restore();
+  ctx.fillStyle = '#2a1f33'; rrect(ctx, 26, 72, 84, 100, 14); ctx.fill(); rrect(ctx, 140, 72, 84, 100, 14); ctx.fill();
+  const dx = 80 + lean, qx = 170 - lean;
+  ctx.fillStyle = '#d9a27a'; dot(ctx, dx, 106 + bob, 19);
+  ctx.fillStyle = '#111'; ctx.fillRect(dx - 20, 82 + bob, 40, 10); ctx.fillRect(dx - 2, 88 + bob, 26, 5);
+  ctx.fillStyle = '#1b1b1f'; ctx.fillRect(dx - 14, 100 + bob, 30, 7);
+  ctx.fillStyle = q.hair || '#f3d27a'; ctx.fillRect(qx - 20, 96 - bob, 40, 46);
+  ctx.fillStyle = q.skin || '#f6d3b3'; dot(ctx, qx, 106 - bob, 18);
+  ctx.fillStyle = q.hair || '#f3d27a'; ctx.beginPath(); ctx.arc(qx, 102 - bob, 19.5, Math.PI * 1.02, Math.PI * 1.98); ctx.fill();
+  ctx.font = '18px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (let i = 0; i < 6; i++) {
+    const hy = 150 - ((t * 40 + i * 30) % 150);
+    ctx.globalAlpha = Math.min(1, hy / 60); ctx.fillStyle = i % 2 ? '#ff3fa4' : '#ff7ab8'; ctx.fillText('♥', 30 + i * 38 + Math.sin(t * 3 + i) * 8, hy);
+  }
+  ctx.globalAlpha = Math.min(0.3, t / 8); ctx.fillStyle = '#e6ecf5';
+  for (let i = 0; i < 7; i++) dot(ctx, (i * 41 + t * 12) % 270 - 10, 36 + (i * 23) % 36, 20);
+  ctx.globalAlpha = 1;
+  ctx.save(); ctx.translate(125, 124); ctx.rotate(-0.08);
+  ctx.fillStyle = '#000'; ctx.fillRect(-100, -16, 200, 32);
+  ctx.fillStyle = '#fff'; ctx.font = '900 19px system-ui, sans-serif'; ctx.fillText('SENSURERT', 0, 1);
+  ctx.restore();
+  if (Math.floor(t * 2) % 2 === 0) { ctx.fillStyle = '#ff3030'; dot(ctx, 16, 152, 5); }
+  ctx.fillStyle = '#fff'; ctx.font = 'bold 11px ui-monospace, monospace'; ctx.textAlign = 'left'; ctx.fillText('REC  CAM 1', 26, 153);
+  ctx.textAlign = 'right'; ctx.fillText(clockStr(), 240, 153);
+  ctx.restore();
+  ctx.strokeStyle = 'rgba(255,255,255,0.35)'; ctx.lineWidth = 2; rrect(ctx, x, y, w, h, 10); ctx.stroke();
 }
 
 function render() {
+  const p = G.p, play = state === 'play' || state === 'pause' || state === 'shop';
+  const shake = (Math.random() - 0.5) * G.shake, camX = G.camX + shake;
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  const cam = G.cam, z = cam.z, p = G.p, play = state === 'play' || state === 'pause';
-  ctx.translate(W / 2 + (Math.random() - 0.5) * G.shake, H / 2 + (Math.random() - 0.5) * G.shake);
-  ctx.scale(z, z); ctx.translate(-cam.x, -cam.y);
-  const v = { x0: cam.x - W / 2 / z, y0: cam.y - H / 2 / z, x1: cam.x + W / 2 / z, y1: cam.y + H / 2 / z };
-  const inV = (o, m = 60) => o.x > v.x0 - m && o.x < v.x1 + m && o.y > v.y0 - m && o.y < v.y1 + m;
-  World.drawGround(ctx, v, T);
-
-  ctx.strokeStyle = 'rgba(8,8,10,0.55)'; ctx.lineWidth = 4; ctx.lineCap = 'round'; ctx.beginPath();
-  for (const s of G.skids) if (s[2] > v.x0 && s[2] < v.x1 && s[3] > v.y0 && s[3] < v.y1) { ctx.moveTo(s[0], s[1]); ctx.lineTo(s[2], s[3]); }
-  ctx.stroke();
-
-  for (const ch of G.chains) {
-    if (!inV(ch)) continue;
-    const b = Math.sin(T * 4 + ch.ph) * 3;
-    ctx.strokeStyle = '#f5c542'; ctx.lineWidth = 3.5;
-    ctx.beginPath(); ctx.ellipse(ch.x, ch.y + b, 12, 8, Math.sin(T * 2 + ch.ph) * 0.6, 0, Math.PI * 2); ctx.stroke();
-    ctx.fillStyle = '#ffe08a'; World.dot(ctx, ch.x, ch.y + b + 9, 4);
-  }
-  const ob = play && objective();
-  if (ob && inV(ob, 100)) {
-    ctx.strokeStyle = ob.col; ctx.lineWidth = 4; ctx.globalAlpha = 0.8;
-    ctx.beginPath(); ctx.arc(ob.x, ob.y, 52 + Math.sin(T * 5) * 6, 0, Math.PI * 2); ctx.stroke(); ctx.globalAlpha = 1;
-    if (G.mission.stage === 'pickup') {
-      ctx.fillStyle = '#3ee68a'; World.dot(ctx, ob.x, ob.y, 8); ctx.fillStyle = '#141414'; World.dot(ctx, ob.x, ob.y, 4);
-      ctx.fillStyle = '#fff'; ctx.font = 'bold 22px system-ui, sans-serif'; ctx.textAlign = 'center';
-      ctx.fillText('!', ob.x, ob.y - 18 - Math.abs(Math.sin(T * 4)) * 6);
-    }
+  ctx.fillStyle = '#0b0c10'; ctx.fillRect(0, 0, W, H);
+  ctx.setTransform(DPR * SC, 0, 0, DPR * SC, 0, DPR * (OY + shake * 0.5));
+  Street.drawSky(ctx, VW, camX, T);
+  Street.drawSkyline(ctx, VW, camX, T);
+  Street.drawMid(ctx, VW, camX);
+  Street.drawBuildings(ctx, VW, camX, T);
+  Street.drawStreet(ctx, VW, camX);
+  for (const q of G.peds) { const X = q.x - camX; if (q.state !== 'in' && X > -40 && X < VW + 40) Street.drawPed(ctx, q, X, T); }
+  const list = G.items.map(it => ({ y: LANES[it.lane] - 0.5, it })).concat(G.traffic.map(c => ({ y: c.y, c })));
+  if (play) list.push({ y: p.y, c: p });
+  list.sort((a, b) => a.y - b.y);
+  for (const d of list) {
+    const X = (d.it || d.c).x - camX;
+    if (X < -260 || X > VW + 260) continue;
+    if (d.it) drawItem(d.it, X); else drawSideCar(ctx, d.c, X, T);
   }
 
-  for (const c of G.traffic) if (inV(c)) drawCar(ctx, c, T);
-  for (const c of G.police) if (inV(c)) drawCar(ctx, c, T);
-  if (play) {
-    const neon = NEON[look.neon][1];
-    if (neon) {
-      ctx.save(); ctx.globalCompositeOperation = 'lighter'; ctx.translate(p.x, p.y); ctx.rotate(p.drawA); ctx.scale(1.5, 0.85);
-      World.drawGlow(ctx, neon, 34, 0, 0, 1 + Math.sin(T * 6) * 0.06); ctx.restore();
-    }
-    drawCar(ctx, p, T, { rims: true, kidney: true });
-  }
-  World.drawTop(ctx, v, T);
-
-  for (const q of G.parts) {
-    if (!inV(q)) continue;
-    ctx.globalAlpha = Math.max(0, q.life / q.max); ctx.fillStyle = q.color; World.dot(ctx, q.x, q.y, q.size);
-  }
-  ctx.globalAlpha = 1;
-
-  // Lys: gatelys, neon, frontlys, blålys
   ctx.globalCompositeOperation = 'lighter';
-  World.drawLights(ctx, v);
-  for (const c of G.traffic) if (inV(c, 200)) carLights(ctx, c, T);
-  for (const c of G.police) if (inV(c, 200)) carLights(ctx, c, T);
-  if (play) carLights(ctx, p, T);
-  for (const ch of G.chains) if (inV(ch)) World.drawGlow(ctx, 'rgba(245,197,66,0.4)', 40, ch.x, ch.y);
-  if (ob && inV(ob, 100)) World.drawGlow(ctx, ob.col === '#3ee68a' ? 'rgba(62,230,138,0.35)' : 'rgba(255,63,164,0.35)', 90, ob.x, ob.y);
+  Street.drawLights(ctx, VW, camX, G.flashes);
+  for (const c of G.traffic) { const X = c.x - camX; if (X > -400 && X < VW + 300) carLights(ctx, c, X, T); }
+  if (play) carLights(ctx, p, p.x - camX, T, NEON[look.neon][1]);
+  for (const it of G.items) {
+    const X = it.x - camX;
+    if (X > -40 && X < VW + 40 && it.kind !== 'kr') drawGlow(ctx, it.kind === 'gummi' ? 'rgba(60,160,255,0.4)' : 'rgba(245,197,66,0.4)', 34, X, LANES[it.lane] - 18);
+  }
   ctx.globalCompositeOperation = 'source-over';
 
-  ctx.textAlign = 'center'; ctx.textBaseline = 'middle'; ctx.font = '900 20px system-ui, sans-serif';
-  for (const q of G.pops) {
-    ctx.globalAlpha = Math.min(1, q.life * 1.5);
-    ctx.fillStyle = '#000'; ctx.fillText(q.text, q.x + 2, q.y + 2);
-    ctx.fillStyle = q.color; ctx.fillText(q.text, q.x, q.y);
+  ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+  for (const q of G.parts) {
+    const X = q.x - camX;
+    ctx.globalAlpha = Math.max(0, q.life / q.max); ctx.fillStyle = q.color;
+    if (q.heart) { ctx.font = `${q.size}px system-ui, sans-serif`; ctx.fillText('♥', X, q.y); } else dot(ctx, X, q.y, q.size);
   }
   ctx.globalAlpha = 1;
-  if (play && G.drift > 8) {
-    ctx.fillStyle = '#ff3fa4'; ctx.font = '900 18px system-ui, sans-serif';
-    ctx.fillText(`DRIFT ${Math.round(G.drift)}`, p.x, p.y - 44);
+  for (const q of G.peds) if (q.sayT > 0 && q.state !== 'in') Street.drawBubble(ctx, q.say, q.x - camX, q.y - 72, Math.min(1, q.sayT * 2));
+  ctx.font = '900 20px system-ui, sans-serif';
+  for (const q of G.pops) {
+    const X = q.x - camX;
+    ctx.globalAlpha = Math.min(1, q.life * 1.5);
+    ctx.fillStyle = '#000'; ctx.fillText(q.text, X + 2, q.y + 2);
+    ctx.fillStyle = q.color; ctx.fillText(q.text, X, q.y);
   }
+  ctx.globalAlpha = 1;
 
-  // Pil mot målet når det er utenfor skjermen
   ctx.setTransform(DPR, 0, 0, DPR, 0, 0);
-  if (ob && !inV(ob, -40)) {
-    const sx = (ob.x - cam.x) * z, sy = (ob.y - cam.y) * z, a = Math.atan2(sy, sx);
-    const k = Math.min((W / 2 - 50) / Math.abs(Math.cos(a) || 1e-6), (H / 2 - 80) / Math.abs(Math.sin(a) || 1e-6));
-    const ax = W / 2 + Math.cos(a) * k, ay = H / 2 + Math.sin(a) * k;
-    ctx.save(); ctx.translate(ax, ay); ctx.rotate(a);
-    ctx.fillStyle = ob.col; ctx.beginPath(); ctx.moveTo(18, 0); ctx.lineTo(-10, -13); ctx.lineTo(-4, 0); ctx.lineTo(-10, 13); ctx.closePath(); ctx.fill();
-    ctx.restore();
-    ctx.fillStyle = '#fff'; ctx.font = 'bold 13px system-ui, sans-serif'; ctx.textAlign = 'center';
-    ctx.fillText(Math.round(dist(ob, p) * 0.5) + ' m', ax - Math.cos(a) * 30, ay - Math.sin(a) * 30);
+  if (play && G.action && G.owned.cam) {
+    const w = W < 640 ? 190 : 260, h = w * 0.66;
+    drawCamView(W - w - 12, W < 640 ? 150 : 140, w, h, G.action);
   }
 }
